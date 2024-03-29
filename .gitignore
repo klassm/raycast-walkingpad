@@ -8,3 +8,5 @@
 .idea
 *.iml
 *.js
+
+raycast-env.d.ts
