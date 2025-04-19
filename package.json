@@ -2,7 +2,7 @@
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "raycast-walkingpad",
   "title": "Walkingpad",
-  "description": "",
+  "description": "Set your WalkingPad speed via Raycast",
   "icon": "walkingpad-icon.png",
   "author": "klassm",
   "license": "MIT",
@@ -10,7 +10,7 @@
     {
       "name": "walkingpad_speed",
       "title": "WalkingPad Speed",
-      "description": "",
+      "description": "Set WalkingPad speed",
       "mode": "view"
     }
   ],
