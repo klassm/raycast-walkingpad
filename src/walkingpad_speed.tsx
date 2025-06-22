@@ -8,7 +8,9 @@ import {
 	List,
 	showToast,
 } from "@raycast/api";
+import { useFetch } from "@raycast/utils";
 import fetch from "node-fetch";
+import { useEffect, useMemo } from "react";
 
 interface Command {
 	text: string;
@@ -112,7 +114,7 @@ export default function WalkingPadSpeed() {
 	};
 
 	return (
-		<List searchBarPlaceholder="WalkingPad Speed" throttle>
+		<List searchBarPlaceholder="WalkingPad Speed" throttle isShowingDetail>
 			<List.Section title="Results">
 				{commands.map((command: Command) => (
 					<List.Item
@@ -122,6 +124,7 @@ export default function WalkingPadSpeed() {
 							source: Icon.ArrowRight,
 							tintColor: Color.Orange,
 						}}
+						detail={<WalkingPadStatus />}
 						actions={
 							<ActionPanel>
 								<ActionPanel.Section>
@@ -137,4 +140,53 @@ export default function WalkingPadSpeed() {
 			</List.Section>
 		</List>
 	);
+}
+
+interface StatusResponse {
+	steps: number;
+	distance: number;
+	walkingSeconds: number;
+	speed: number;
+}
+
+function isStatusResponse(value: unknown): value is StatusResponse {
+	// biome-ignore lint: we need an any here
+	const asAny = value as any;
+	if (typeof asAny !== "object") {
+		return false;
+	}
+	const { steps, distance, walkingSeconds, speed } = asAny;
+	return [steps, distance, walkingSeconds, speed].every(
+		(entry) => entry !== undefined && typeof entry === "number",
+	);
+}
+
+function WalkingPadStatus() {
+	const { isLoading, data, revalidate } = useFetch(
+		"http://[::1]:4934/treadmill",
+		{ method: "GET" },
+	);
+	useEffect(() => {
+		const interval = setInterval(() => {
+			revalidate();
+		}, 1000);
+		return () => clearInterval(interval);
+	}, [revalidate]);
+	const markdown = useMemo(() => {
+		if (!data || !isStatusResponse(data)) {
+			return null;
+		}
+		return `
+		Steps: ${data.steps} steps
+		Distance: ${data.distance} m
+		Seconds: ${data.walkingSeconds} seconds
+		Seconds: ${data.speed} km/h
+		`;
+	}, [data]);
+
+	if (!markdown) {
+		return null;
+	}
+
+	return <List.Item.Detail isLoading={isLoading} markdown={markdown} />;
 }
