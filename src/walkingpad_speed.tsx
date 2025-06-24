@@ -9,6 +9,7 @@ import {
 	showToast,
 } from "@raycast/api";
 import { useFetch } from "@raycast/utils";
+import { Duration } from "luxon";
 import fetch from "node-fetch";
 import { useEffect, useMemo } from "react";
 
@@ -176,11 +177,19 @@ function WalkingPadStatus() {
 		if (!data || !isStatusResponse(data)) {
 			return null;
 		}
+		const duration =
+			data.walkingSeconds > 3600
+				? Duration.fromObject({ seconds: data.walkingSeconds })
+						.shiftTo("hours")
+						.toFormat("h'h' m'm' s's'")
+				: Duration.fromObject({ seconds: data.walkingSeconds })
+						.shiftTo("minutes")
+						.toFormat("mm'm' ss's'");
 		return `
 		Steps: ${data.steps} steps
 		Distance: ${data.distance} m
-		Seconds: ${data.walkingSeconds} seconds
-		Seconds: ${data.speed} km/h
+		Duration: ${duration}
+		Speed: ${data.speed} km/h
 		`;
 	}, [data]);
 
