@@ -1,4 +1,5 @@
-import { execSync } from "node:child_process";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
 	Action,
 	ActionPanel,
@@ -7,11 +8,16 @@ import {
 	Icon,
 	List,
 	showToast,
+	Toast,
 } from "@raycast/api";
 import { useFetch } from "@raycast/utils";
 import { Duration } from "luxon";
-import fetch from "node-fetch";
 import { useEffect, useMemo } from "react";
+
+const execFileAsync = promisify(execFile);
+
+const API_BASE = "http://[::1]:4934";
+const APP_NAME = "Walkingpad Client";
 
 interface Command {
 	text: string;
@@ -93,25 +99,118 @@ const commands = [
 	},
 ];
 
-async function startAppIfRequired() {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function isClientAvailable(): Promise<boolean> {
 	try {
-		execSync(`ps aux | grep -v "grep" | grep "Walkingpad Client"`);
-	} catch (_e) {
-		execSync(`open -a "Walkingpad Client"`);
-		await new Promise((resolve) => setTimeout(resolve, 3000));
+		const response = await fetch(`${API_BASE}/treadmill`, {
+			method: "GET",
+			signal: AbortSignal.timeout(1500),
+		});
+		return response.ok;
+	} catch {
+		return false;
+	}
+}
+
+async function ensureClientAvailable(): Promise<void> {
+	if (await isClientAvailable()) {
+		return;
+	}
+	try {
+		await execFileAsync("open", ["-a", APP_NAME]);
+	} catch {
+		throw new Error(
+			`Could not start the ${APP_NAME} app. Please install and start it manually.`,
+		);
+	}
+	const timeoutMs = 15000;
+	for (let waited = 0; waited < timeoutMs; waited += 500) {
+		await sleep(500);
+		if (await isClientAvailable()) {
+			return;
+		}
+	}
+	throw new Error(
+		`The ${APP_NAME} app is not responding. Please check that it is running.`,
+	);
+}
+
+const NOT_CONNECTED_MESSAGE =
+	"WalkingPad is not connected. Connect the treadmill in the WalkingPad client first.";
+
+interface StatusResponse {
+	steps: number;
+	distance: number;
+	walkingSeconds: number;
+	speed: number;
+	connected?: boolean;
+}
+
+async function fetchStatus(): Promise<StatusResponse> {
+	const response = await fetch(`${API_BASE}/treadmill`, {
+		method: "GET",
+		signal: AbortSignal.timeout(5000),
+	});
+	if (!response.ok) {
+		throw new Error(
+			`The ${APP_NAME} app returned an error (HTTP ${response.status}).`,
+		);
+	}
+	const data: unknown = await response.json();
+	if (!isStatusResponse(data)) {
+		throw new Error(
+			`The ${APP_NAME} app returned an unexpected status response.`,
+		);
+	}
+	return data;
+}
+
+async function sendCommand(path: string): Promise<void> {
+	const status = await fetchStatus();
+	if (status.connected === false) {
+		throw new Error(NOT_CONNECTED_MESSAGE);
+	}
+	let response: Response;
+	try {
+		response = await fetch(`${API_BASE}${path}`, {
+			method: "POST",
+			signal: AbortSignal.timeout(5000),
+		});
+	} catch (error) {
+		throw new Error(
+			`Could not reach the ${APP_NAME} app: ${error instanceof Error ? error.message : String(error)}`,
+		);
+	}
+	if (response.status === 428) {
+		throw new Error(NOT_CONNECTED_MESSAGE);
+	}
+	if (!response.ok) {
+		throw new Error(
+			`The ${APP_NAME} app returned an error (HTTP ${response.status}).`,
+		);
 	}
 }
 
 export default function WalkingPadSpeed() {
 	const requestTreadmill = async ({ text, path }: Command) => {
-		await startAppIfRequired();
-		// noinspection HttpUrlsUsage
-		await fetch(`http://[::1]:4934${path}`, { method: "POST" });
-		await showToast({
-			title: "Success",
-			message: `Treadmill was set to ${text}`,
+		const toast = await showToast({
+			style: Toast.Style.Animated,
+			title: "Sending command",
+			message: text,
 		});
-		setTimeout(closeMainWindow, 1000);
+		try {
+			await ensureClientAvailable();
+			await sendCommand(path);
+			toast.style = Toast.Style.Success;
+			toast.title = "Success";
+			toast.message = `Treadmill was set to ${text}`;
+			setTimeout(closeMainWindow, 1000);
+		} catch (error) {
+			toast.style = Toast.Style.Failure;
+			toast.title = "Failed";
+			toast.message = error instanceof Error ? error.message : String(error);
+		}
 	};
 
 	return (
@@ -130,7 +229,7 @@ export default function WalkingPadSpeed() {
 							<ActionPanel>
 								<ActionPanel.Section>
 									<Action
-										title="Set speed"
+										title={command.text}
 										onAction={() => requestTreadmill(command)}
 									/>
 								</ActionPanel.Section>
@@ -141,13 +240,6 @@ export default function WalkingPadSpeed() {
 			</List.Section>
 		</List>
 	);
-}
-
-interface StatusResponse {
-	steps: number;
-	distance: number;
-	walkingSeconds: number;
-	speed: number;
 }
 
 function isStatusResponse(value: unknown): value is StatusResponse {
@@ -163,8 +255,8 @@ function isStatusResponse(value: unknown): value is StatusResponse {
 }
 
 function WalkingPadStatus() {
-	const { isLoading, data, revalidate } = useFetch(
-		"http://[::1]:4934/treadmill",
+	const { isLoading, data, error, revalidate } = useFetch(
+		`${API_BASE}/treadmill`,
 		{ method: "GET" },
 	);
 	useEffect(() => {
@@ -176,6 +268,9 @@ function WalkingPadStatus() {
 	const markdown = useMemo(() => {
 		if (!data || !isStatusResponse(data)) {
 			return null;
+		}
+		if (data.connected === false) {
+			return "**WalkingPad is not connected.**\n\nConnect the treadmill in the WalkingPad client first.";
 		}
 		const duration =
 			data.walkingSeconds > 3600
@@ -193,8 +288,21 @@ function WalkingPadStatus() {
 		`;
 	}, [data]);
 
+	if (error) {
+		return (
+			<List.Item.Detail
+				markdown={`**WalkingPad client is not reachable.**\n\nMake sure the ${APP_NAME} app is running.`}
+			/>
+		);
+	}
+
 	if (!markdown) {
-		return null;
+		return (
+			<List.Item.Detail
+				isLoading={isLoading}
+				markdown="Waiting for status ..."
+			/>
+		);
 	}
 
 	return <List.Item.Detail isLoading={isLoading} markdown={markdown} />;
