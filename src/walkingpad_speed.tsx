@@ -16,7 +16,7 @@ import { useEffect, useMemo } from "react";
 
 const execFileAsync = promisify(execFile);
 
-const API_BASE = "http://[::1]:4934";
+const API_BASE = "http://127.0.0.1:4934";
 const APP_NAME = "Walkingpad Client";
 
 interface Command {
